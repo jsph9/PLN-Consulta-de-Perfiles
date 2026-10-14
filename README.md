@@ -1,49 +1,123 @@
-# PLN - Consulta de Perfiles
+# Grafo Temporal de Relaciones Políticas del Perú
 
-Proyecto NLP en espanol para analizar noticias politicas peruanas. Tiene dos usos principales:
+Sistema de procesamiento de lenguaje natural (PLN) que convierte un archivo de **50,000 noticias** de la Agencia Andina en un **grafo de conocimiento temporal** de actores políticos peruanos (2021–2026). En lugar de forzar las interacciones en categorías predefinidas como "apoya" o "ataca", extrae los verbos tal como aparecen en el texto y los agrupa en familias de relaciones mediante clustering semántico. El resultado se explora en una aplicación web interactiva que muestra cómo cambian las alianzas y quiénes son los actores centrales en cada periodo. Proyecto académico desarrollado en un equipo de 5 personas.
 
-- **Cronologias de figuras politicas**: genera lineas de tiempo comparando cuatro condiciones: `B0Lead`, `B1Extractive`, `SistemaRAG` y `Ablacion`.
-- **Grafos temporales de relaciones**: construye grafos de entidades y relaciones abiertas desde un corpus Andina/JSONL, con una arista fechada por co-ocurrencia.
+---
 
-La aplicacion web FastAPI **solo lee resultados ya precomputados**. No debe scrapear, correr spaCy/torch ni llamar LLMs durante un request.
+## Capturas
 
-## Requisitos
+![Vista general del grafo temporal](REEMPLAZAR-URL-1)
 
-- Python `>=3.12,<3.14`. La version local sugerida esta en `.python-version`: `3.13`.
-- `uv` para crear el entorno y ejecutar comandos del proyecto.
-- Modelo spaCy espanol `es_core_news_md` para NER y dependency parsing en los flujos locales.
-- `.env` solo si vas a usar LLMs o cambiar configuracion por entorno. Los flujos B0/B1 y `build_open_graph.py` no requieren API key.
+| Centralidad de actores | Ego-network de un actor |
+|---|---|
+| ![Centralidad](REEMPLAZAR-URL-2) | ![Ego-network](REEMPLAZAR-URL-3) |
 
-## Instalacion
+---
 
-Desde la raiz del repositorio:
+## Tecnologías Utilizadas
+
+**Lenguaje y entorno:** Python 3.13, uv
+
+**PLN y machine learning:** spaCy (análisis de dependencias), Transformers (BETO para NER), sentence-transformers (`paraphrase-multilingual-MiniLM-L12-v2`), clustering aglomerativo, PyTorch (CUDA)
+
+**LLMs:** capa agnóstica de proveedor (Anthropic, OpenAI, Groq, Gemini) con salida estructurada validada con Pydantic
+
+**Datos y grafos:** DuckDB, NetworkX (PageRank, comunidades de Louvain, caminos mínimos), Parquet
+
+**Backend:** FastAPI
+
+**Frontend:** Cytoscape.js, JavaScript
+
+**Ingesta:** Requests, BeautifulSoup (lxml)
+
+---
+
+## Características
+
+- **Grafo temporal de actores políticos:** personas y organizaciones conectadas por relaciones fechadas, construido a partir de 1.98 millones de menciones de entidades y 71,396 relaciones extraídas.
+- **Relaciones abiertas, no categorías rígidas:** el sistema extrae el verbo que conecta a dos actores ("lidera", "rechaza", "se reúne con") a partir del árbol sintáctico de la oración.
+- **453 familias de relaciones inducidas automáticamente** a partir de 6,673 predicados distintos, sin una taxonomía definida de antemano.
+- **Análisis de redes:** centralidad (PageRank) para identificar actores con poder de convocatoria, detección de facciones (comunidades de Louvain) y caminos mínimos entre actores.
+- **Dos vistas en la aplicación web:** el grafo completo de un tema y una cronología por actor (ego-network), para seguir su evolución en el tiempo.
+- **Líneas de tiempo de figuras políticas con LLMs:** generación de resúmenes de eventos anclados únicamente en los pasajes de las noticias (RAG), comparada contra baselines extractivos y contra una versión sin anclaje para medir alucinaciones.
+
+---
+
+## El Proceso
+
+**Ingesta del corpus.** El buscador de la Agencia Andina limita cada consulta a unos 300 resultados, así que construimos un crawler que recorre las noticias por ID, con límite de 2 solicitudes por segundo, reintentos con espera exponencial y checkpoints para reanudar. Al limpiar el HTML eliminamos también las firmas de los periodistas (por ejemplo, "(FIN) NDP/JCR"), porque el modelo de NER confundía esas iniciales con organizaciones.
+
+**Reconocimiento y resolución de entidades.** Un mismo político aparece con muchos nombres ("Pedro Castillo", "P. Castillo", "presidente Castillo"). Comparar todas las menciones entre sí era inviable, así que usamos *blocking* con un índice invertido de tokens: solo se comparan los grupos que comparten alguna palabra. Para decidir si dos nombres son la misma entidad usamos un **ratio de contención** (palabras en común dividido entre el nombre más corto) con un umbral de 0.7, en lugar de la similitud de Jaccard, que separaba "Partido Nacionalista" de "Partido Nacionalista Peruano".
+
+**Extracción de relaciones.** Para cada par de entidades que aparecen en la misma oración, el sistema busca el verbo que las conecta en el árbol de dependencias. Si no hay un verbo explícito, la relación se descarta: priorizamos precisión sobre cobertura, porque que dos actores aparezcan juntos no significa que estén relacionados.
+
+**Clustering semántico.** En vez de agrupar las 71,396 relaciones, agrupamos solo los 6,673 predicados únicos, lo que reduce drásticamente el costo. Cada predicado se convierte en un embedding dentro de una plantilla neutral ("ENT_A [predicado] ENT_B") y se agrupa con clustering aglomerativo por distancia coseno.
+
+**Rendimiento.** Dos optimizaciones hicieron viable procesar todo el archivo: un *matcher* compilado de patrones sintácticos multiplicó por 7 la velocidad de extracción, y la inserción masiva en DuckDB multiplicó por 8 la velocidad de construcción del grafo. Guardar las 71,396 relaciones pasó de más de 6 minutos a 45 segundos.
+
+**Aplicación web.** La API en FastAPI solo lee resultados precalculados: no ejecuta modelos ni llama a LLMs durante una solicitud. El frontend carga primero la estructura del grafo y pide los pasajes de evidencia de cada relación recién cuando el usuario la selecciona, para no saturar la memoria del navegador.
+
+---
+
+## Resultados
+
+| Métrica | Resultado |
+|---|---|
+| Noticias procesadas | 50,000 |
+| Menciones de entidades | 1,983,499 |
+| Relaciones fechadas en el grafo | 71,396 |
+| Familias de relaciones inducidas | 453 (a partir de 6,673 predicados) |
+| Resolución de entidades | Precisión de 0.71, recall de 0.83 |
+| Velocidad de extracción | De 11.6 a 80.8 documentos por segundo (7×) |
+| Velocidad de inserción en el grafo | De 193 a 1,586 relaciones por segundo (8×) |
+
+| Familias de relaciones más frecuentes | Optimización de rendimiento |
+|---|---|
+| ![Top 10 familias de relaciones](docs/img/distribution_chart.png) | ![Optimización de rendimiento](docs/img/scalability_chart.png) |
+
+<details>
+<summary><b>Ver ejemplo de ego-network</b></summary>
+
+![Ego-network de un actor político](docs/img/ego_network_chart.png)
+
+</details>
+
+El detalle de la metodología y la evaluación está en el [paper del proyecto](docs/PLN_ConsultadePerfiles-Paper.pdf).
+
+---
+
+## Lo Que Aprendí
+
+Aprendí a diseñar un pipeline de PLN que escala a millones de menciones priorizando decisiones algorítmicas (blocking, clustering sobre predicados únicos, inserción masiva) antes que más hardware, y a evaluar con métricas propias cuándo un LLM aporta y cuándo alucina.
+
+---
+
+## Cómo Puede Mejorarse
+
+- **Resolución de correferencias:** cuando un actor se menciona solo por su cargo ("el ministro de Economía"), hoy queda como un nodo separado o se pierde la relación.
+- **Fuentes más diversas:** el corpus es de una agencia estatal; sumar otros medios reduciría el sesgo en la representación de la oposición.
+- **Pruebas automatizadas y CI:** hoy la verificación se hace con scripts manuales; un conjunto de pruebas con `pytest` haría más seguros los cambios en el pipeline.
+
+---
+
+## Cómo Correr el Proyecto
+
+### Requisitos
+- Python `>=3.12,<3.14` y [uv](https://docs.astral.sh/uv/)
+- Modelo de spaCy `es_core_news_md`
+
+### Instalación
 
 ```bash
 uv sync
 uv run python -m spacy download es_core_news_md
 ```
 
-Opcional, si vas a usar LLMs o quieres fijar variables de entorno:
+Para usar LLMs, copia `.env.example` a `.env` y agrega la API key del proveedor. El grafo y los flujos sin LLM no la necesitan.
 
-```bash
-cp .env.example .env
-```
+### Abrir la aplicación web
 
-En Windows PowerShell usa:
-
-```powershell
-copy .env.example .env
-```
-
-Verifica el entorno:
-
-```bash
-uv run python -c "import pandas, spacy; spacy.load('es_core_news_md'); print('OK')"
-```
-
-## Ejecutar La App Web
-
-Las salidas finales versionadas viven en `data/salidas/` y `data/figuras.json`, asi que no necesitas reprocesar nada para abrir la aplicacion.
+Los resultados ya precalculados están versionados en `data/`, así que no hace falta reprocesar nada:
 
 ```bash
 uv run uvicorn src.app.api:app --reload
@@ -51,18 +125,7 @@ uv run uvicorn src.app.api:app --reload
 
 Abre `http://127.0.0.1:8000`.
 
-La app lee:
-
-- `data/figuras.json`
-- `data/salidas/<slug>/*.json`
-- `data/corpus_<slug>.parquet`, si existe, para resolver fuentes
-- `data/graph_<slug>.duckdb`, si existe, para la vista de grafo
-
-## Construir Un Grafo Temporal Desde JSONL
-
-Si ya tienes `data/andina_crawl.jsonl`, puedes construir un grafo temporal de relaciones abiertas sin LLM ni API key.
-
-Ejemplo para marzo-mayo de 2026, inclusivo:
+### Construir un grafo desde cero
 
 ```bash
 uv run python scripts/build_open_graph.py andina-mar-may-2026 \
@@ -72,134 +135,4 @@ uv run python scripts/build_open_graph.py andina-mar-may-2026 \
   --fin 05-2026
 ```
 
-Esto lee `data/andina_crawl.jsonl` y escribe:
-
-```text
-data/graph_andina-mar-may-2026.duckdb
-```
-
-Notas importantes:
-
-- `--inicio` y `--fin` usan formato `MM-YYYY`; el rango es inclusivo por mes completo.
-- El script carga el corpus, filtra fechas, filtra idioma espanol, descubre entidades, extrae predicados abiertos y guarda el grafo en DuckDB.
-- Si `data/graph_<slug>.duckdb` ya existe, el script lo borra y lo reconstruye.
-- `--wikidata` es opcional y agrega llamadas de red para enriquecer entidades.
-- `--menciones` solo aplica al leer un corpus parquet con `--corpus-slug`; no se usa con `--jsonl`.
-- Por defecto usa `es_core_news_md` porque el script fija `SPACY_NER_MODEL` y `SPACY_DEP_MODEL` si no estan definidos.
-
-Tambien puedes construir desde un corpus parquet existente:
-
-```bash
-uv run python scripts/build_open_graph.py grafo-humala \
-  --corpus-slug humala \
-  --top-n 40 \
-  --inicio 03-2026 \
-  --fin 05-2026
-```
-
-## Crear `data/andina_crawl.jsonl` Si No Existe
-
-El crawler por ID de Andina es resumible, pero puede ser lento porque visita una URL por ID. Usa rangos acotados.
-
-```bash
-uv run python scripts/crawl_andina.py \
-  --desde-id <ID_INICIO> \
-  --hasta-id <ID_FIN> \
-  --salida data/andina_crawl.jsonl \
-  --delay 0.5 \
-  --desde 2026-03-01 \
-  --hasta 2026-05-31
-```
-
-El checkpoint queda junto al JSONL:
-
-```text
-data/andina_crawl.ckpt.json
-```
-
-Reanudar es volver a correr el mismo comando.
-
-## Otros Flujos Offline
-
-Regenerar una figura configurada en `src/figuras.py`:
-
-```bash
-uv run python scripts/precompute_figura.py humala
-```
-
-Este flujo escribe `data/corpus_<slug>.parquet`, `data/salidas/<slug>/*.json`, `data/graph_<slug>.duckdb` y actualiza `data/figuras.json`. Sin API key genera solo `b0_lead.json` y `b1_extractive.json`; con LLM disponible tambien genera `sistema_rag.json` y `ablacion.json`.
-
-Construir un grafo de tema configurado en `src/figuras.py`:
-
-```bash
-uv run python scripts/precompute_tema.py elecciones-2021-2026
-```
-
-`precompute_tema.py` reutiliza `data/corpus_<slug>.parquet` si existe; si no, scrapea las fuentes configuradas. Tambien borra `data/graph_<slug>.duckdb` si existe para hacer un rerun limpio.
-
-Frontend Streamlit legacy, si lo necesitas:
-
-```bash
-uv run streamlit run src/app/streamlit_app.py
-```
-
-Debe estar corriendo el backend FastAPI.
-
-## Entradas Y Salidas
-
-Entradas frecuentes:
-
-- `.env`: proveedor LLM, API keys opcionales, modelos spaCy, `TIMELINE_DATA_DIR`.
-- `src/figuras.py`: figuras, temas, queries, ventanas temporales, gazetteers y homonimos.
-- `data/andina_crawl.jsonl`: corpus JSONL producido por el crawler.
-- `data/corpus_<slug>.parquet`: corpus preprocesado por figura/tema.
-- `data/figuras.json`: manifiesto que consume la app.
-- `data/salidas/<slug>/*.json`: cronologias precomputadas.
-- `data/graph_<slug>.duckdb`: grafo precomputado.
-- `annotation/gold/`, `annotation/gold_relaciones/`, `annotation/gold_entidades/`: datos gold para evaluacion.
-
-Salidas frecuentes:
-
-- `data/figuras.json`: manifiesto de figuras/temas disponibles.
-- `data/salidas/<slug>/*.json`: salidas de cronologia por condicion.
-- `data/corpus_<slug>.parquet`: corpus descargado/preprocesado.
-- `data/graph_<slug>.duckdb`: grafo DuckDB de relaciones.
-- `data/andina_crawl.jsonl`: crawl completo o parcial de Andina.
-- `data/andina_crawl.ckpt.json`: checkpoint del crawler.
-- `data/jobs/<slug>.json`, `data/jobs/<slug>.log`, `data/jobs/<slug>.params.json`: jobs lanzados desde la web.
-- `data/figuras_dinamicas.json`: figuras creadas desde la UI.
-
-Los archivos intermedios grandes bajo `data/` suelen estar gitignoreados. Las salidas finales versionadas son `data/figuras.json` y `data/salidas/`.
-
-## Variables De Entorno Importantes
-
-- `RELATIONS_LLM_PROVIDER`: proveedor compartido para clasificacion de relaciones y generacion de timeline (`anthropic`, `openai`, `groq`, `gemini`). Sin `.env`, el codigo usa `anthropic`; `.env.example` usa `gemini`.
-- `RELATIONS_LLM_MODEL` / `TIMELINE_LLM_MODEL`: override de modelos.
-- `RELATIONS_LLM_TEMPERATURE`: default `0.0`.
-- `TIMELINE_LLM_TEMPERATURE`: default `0.7`.
-- `SPACY_NER_MODEL`: modelo spaCy para NER; localmente usa `es_core_news_md`.
-- `SPACY_DEP_MODEL`: modelo spaCy para dependency parsing; localmente usa `es_core_news_md`.
-- `TIMELINE_DATA_DIR`: raiz de datos para grafos y cache. Debe fijarse antes de importar `src.storage` o `src.app.api` en tests que usen un directorio temporal.
-- `RELATIONS_NLP_PROCS`: procesos para `nlp.pipe` en extraccion de relaciones abiertas; default `1`.
-
-## Verificacion Y Checks
-
-No hay suite pytest configurada, CI, pre-commit, Makefile ni task runner. Usa checks focalizados:
-
-```bash
-uv run python -m compileall -q src scripts eval
-uv run python scripts/test_relations.py
-uv run python scripts/test_entities.py
-uv run python scripts/test_multifuente.py
-uv run python scripts/test_eval.py
-uv run python scripts/test_grafo_api.py
-uv run python scripts/test_relation_typing.py
-```
-
-La evaluacion completa de cronologias requiere gold congelado:
-
-```bash
-uv run python -m eval.run_experiment 3
-```
-
-Los CSV de evaluacion de relaciones y entidades viven bajo `annotation/gold_relaciones/` y `annotation/gold_entidades/`.
+La guía técnica completa (crawler, generación de cronologías, variables de entorno y evaluación) está en [docs/guia-tecnica.md](docs/guia-tecnica.md).

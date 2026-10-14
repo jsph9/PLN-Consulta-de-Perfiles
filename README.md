@@ -6,13 +6,14 @@ Sistema de procesamiento de lenguaje natural (PLN) que convierte un archivo de *
 
 ## Capturas
 
-![Vista general del grafo temporal](REEMPLAZAR-URL-1)
+![Vista general del grafo temporal](https://github.com/user-attachments/assets/6f9a64f6-fb86-4c29-86a0-aaa3f10f31a8)
 
 | Centralidad de actores | Ego-network de un actor |
 |---|---|
-| ![Centralidad](REEMPLAZAR-URL-2) | ![Ego-network](REEMPLAZAR-URL-3) |
+| ![Centralidad](https://github.com/user-attachments/assets/dfb405ba-8f1e-4e5d-ae1f-ed98bf68b2b5) | ![Ego-network](https://github.com/user-attachments/assets/09832625-8c8d-416a-8bc8-3dd4013f148a) |
 
 ---
+
 
 ## Tecnologías Utilizadas
 
